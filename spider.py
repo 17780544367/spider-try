@@ -42,9 +42,21 @@ def setup_driver():
 
 def create_content_folder():
     """创建保存内容的文件夹"""
-    content_folder = os.path.join(os.path.dirname(__file__), "内容")
+    # 获取当前脚本的绝对路径
+    current_path = os.path.abspath(os.path.dirname(__file__))
+    # 在当前目录下创建"内容"文件夹
+    content_folder = os.path.join(current_path, "内容")
+    
+    # 如果文件夹不存在则创建
     if not os.path.exists(content_folder):
-        os.makedirs(content_folder)
+        try:
+            os.makedirs(content_folder)
+            print(f"创建文件夹成功: {content_folder}")
+        except Exception as e:
+            print(f"创建文件夹失败: {e}")
+    else:
+        print(f"文件夹已存在: {content_folder}")
+    
     return content_folder
 
 def get_current_time():
@@ -60,96 +72,153 @@ def scrape_articles():
     try:
         # 打开搜狗微信搜索页面
         driver.get("https://weixin.sogou.com/")
+        time.sleep(3)
         
-        # 等待搜索框出现并输入关键词
-        search_box = WebDriverWait(driver, 10).until(
-            EC.presence_of_element_located((By.ID, "query"))
-        )
-        search_box.clear()
-        search_box.send_keys("AI")
-        
-        # 修改这部分：等待搜索按钮出现并点击
         try:
-            # 首先尝试使用新的选择器
-            search_button = WebDriverWait(driver, 5).until(
-                EC.element_to_be_clickable((By.CSS_SELECTOR, ".btn-search"))
+            # 等待搜索框可见并输入
+            search_box = WebDriverWait(driver, 15).until(
+                EC.presence_of_element_located((By.ID, "query"))
             )
-        except:
-            try:
-                # 如果失败，尝试使用其他可能的选择器
-                search_button = WebDriverWait(driver, 5).until(
-                    EC.element_to_be_clickable((By.CSS_SELECTOR, "[uigs='search_article']"))
-                )
-            except:
-                # 最后尝试直接按回车键搜索
-                search_box.send_keys(Keys.RETURN)
-                time.sleep(2)
-        else:
-            search_button.click()
-            time.sleep(2)
-        
-        # 确保搜索结果已加载
-        WebDriverWait(driver, 10).until(
-            EC.presence_of_element_located((By.CLASS_NAME, "news-box"))
-        )
-        
-        # 添加检查是否需要验证码的逻辑
-        if "验证码" in driver.page_source:
-            input("请在浏览器中完成验证码验证，然后按回车继续...")
-        
-        # 爬取前3页
-        for page in range(3):
-            print(f"正在爬取第{page + 1}页...")
+            search_box.clear()
+            search_box.send_keys("AI")
+            time.sleep(1)
             
-            # 等待文章列表加载
-            WebDriverWait(driver, 10).until(
-                EC.presence_of_element_located((By.CLASS_NAME, "news-box"))
-            )
+            # 直接提交搜索，不需要点击文章标签
+            search_box.send_keys(Keys.RETURN)
+            time.sleep(5)  # 增加等待时间
             
-            # 获取所有文章项
-            articles = driver.find_elements(By.CLASS_NAME, "news-box")
+            # 检查是否需要验证码
+            if "验证码" in driver.page_source:
+                input("请在浏览器中完成验证码验证，然后按回车继续...")
+                time.sleep(3)
             
-            # 解析每篇文章的信息
-            for article in articles:
+            # 爬取前3页
+            for page in range(3):
+                print(f"正在爬取第{page + 1}页...")
+                
+                # 等待文章列表加载
                 try:
-                    title = article.find_element(By.CSS_SELECTOR, "h3 a").text
-                    link = article.find_element(By.CSS_SELECTOR, "h3 a").get_attribute("href")
-                    summary = article.find_element(By.CLASS_NAME, "txt-info").text
-                    source = article.find_element(By.CLASS_NAME, "account").text
+                    # 等待文章列表容器加载
+                    WebDriverWait(driver, 15).until(
+                        EC.presence_of_element_located((By.CLASS_NAME, "main-left"))
+                    )
+                    time.sleep(2)
                     
-                    articles_data.append({
-                        "标题": title,
-                        "摘要": summary,
-                        "链接": link,
-                        "来源": source
-                    })
+                    # 滚动页面以加载所有文章
+                    driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
+                    time.sleep(2)
+                    
+                    # 使用新的选择器获取所有文章
+                    articles = driver.find_elements(By.CSS_SELECTOR, ".news-list li")
+                    # 如果上面的选择器无法找到文章，尝试备用选择器
+                    if not articles:
+                        articles = driver.find_elements(By.CSS_SELECTOR, "div.txt-box")
+                    
+                    print(f"找到{len(articles)}篇文章")
+                    
+                    # 遍历每篇文章
+                    for article in articles:
+                        try:
+                            # 获取标题和链接
+                            title_element = article.find_element(By.CSS_SELECTOR, "h3 a, .tit a")
+                            title = title_element.text.strip()
+                            link = title_element.get_attribute("href")
+                            
+                            # 获取摘要
+                            try:
+                                summary = article.find_element(By.CSS_SELECTOR, ".txt-info, .s-p").text.strip()
+                            except:
+                                try:
+                                    summary = article.find_element(By.CSS_SELECTOR, "p").text.strip()
+                                except:
+                                    summary = "无摘要"
+                            
+                            # 获取来源
+                            try:
+                                source = article.find_element(By.CSS_SELECTOR, ".account, .s2").text.strip()
+                            except:
+                                source = "未知来源"
+                            
+                            if title:  # 只添加有标题的文章
+                                articles_data.append({
+                                    "标题": title,
+                                    "摘要": summary,
+                                    "链接": link,
+                                    "来源": source
+                                })
+                                print(f"成功抓取文章: {title[:20]}...")
+                                
+                        except Exception as e:
+                            print(f"解析文章时出错: {str(e)}")
+                            # 保存当前文章的HTML以便调试
+                            try:
+                                with open(f"error_article_{len(articles_data)}.html", "w", encoding="utf-8") as f:
+                                    f.write(article.get_attribute("outerHTML"))
+                            except:
+                                pass
+                            continue
+                    
+                    # 如果不是最后一页，点击下一页
+                    if page < 2:
+                        try:
+                            # 滚动到页面底部
+                            driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
+                            time.sleep(2)
+                            
+                            next_button = WebDriverWait(driver, 5).until(
+                                EC.element_to_be_clickable((By.ID, "sogou_next"))
+                            )
+                            driver.execute_script("arguments[0].scrollIntoView();", next_button)
+                            time.sleep(1)
+                            next_button.click()
+                            time.sleep(5)
+                            
+                        except Exception as e:
+                            print(f"翻页失败: {str(e)}")
+                            break
+                            
                 except Exception as e:
-                    print(f"解析文章时出错: {e}")
-                    continue
-            
-            # 如果不是最后一页，点击下一页
-            if page < 2:
-                try:
-                    next_page = driver.find_element(By.ID, "sogou_next")
-                    next_page.click()
-                    time.sleep(10)  # 休眠10秒
-                except Exception as e:
-                    print(f"翻页时出错: {e}")
+                    print(f"处理第{page + 1}页时出错: {str(e)}")
+                    driver.save_screenshot(f"error_page_{page+1}.png")
                     break
             
-        # 将数据保存到Excel文件
-        if articles_data:
-            filename = f"AI_微信_{get_current_time()}.xlsx"
-            filepath = os.path.join(content_folder, filename)
-            df = pd.DataFrame(articles_data)
-            df.to_excel(filepath, index=False, engine='openpyxl')
-            print(f"数据已保存到: {filepath}")
+            # 保存数据
+            if articles_data:
+                try:
+                    filename = f"AI_微信_{get_current_time()}.xlsx"
+                    filepath = os.path.join(content_folder, filename)
+                    print(f"准备保存文件到: {filepath}")
+                    
+                    df = pd.DataFrame(articles_data)
+                    df.to_excel(filepath, index=False, engine='openpyxl')
+                    
+                    if os.path.exists(filepath):
+                        print(f"文件成功保存到: {filepath}")
+                        print(f"共保存{len(articles_data)}条数据")
+                    else:
+                        print("文件保存失败，未找到生成的文件")
+                        
+                except Exception as e:
+                    print(f"保存数据时出错: {str(e)}")
+                    print(f"当前工作目录: {os.getcwd()}")
+                    print(f"目标保存路径: {filepath}")
+            else:
+                print("未获取到任何数据，跳过保存步骤")
+                
+        except Exception as e:
+            print(f"搜索操作失败: {str(e)}")
+            driver.save_screenshot("error_screenshot.png")
+            print("已保存错误截图")
             
     except Exception as e:
-        print(f"发生错误: {e}")
-    
+        print(f"发生错误: {str(e)}")
+        driver.save_screenshot("error_final.png")
+        
     finally:
-        driver.quit()
+        try:
+            driver.quit()
+        except:
+            pass
 
 if __name__ == "__main__":
     scrape_articles()
